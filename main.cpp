@@ -13,6 +13,7 @@
 #include <fstream>
 #include <sstream>
 #include <cmath>
+#include <random>
 
 // Window settings
 const unsigned int SCR_WIDTH = 1200;
@@ -28,7 +29,7 @@ glm::vec3 cameraFront = glm::vec3(0.0f, -0.3f, -1.0f);
 glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
 
 // Character
-glm::vec3 characterPos(0.0f, 0.5f, 0.0f); // ПОВЫСИЛИ ПЕРСОНАЖА НАД ПОЛОМ
+glm::vec3 characterPos(0.0f, 0.5f, 0.0f);
 float characterYaw = 0.0f;
 float movementSpeed = 3.0f;
 float runSpeed = 6.0f;
@@ -51,6 +52,12 @@ const float baseJumpForce = 8.0f;
 const float maxJumpForce = 12.0f;
 const float landingRecovery = 3.0f;
 
+// Анимации прыжка
+float jumpAnimationTime = 0.0f;
+float jumpSquatBlend = 0.0f;    // Приседание перед прыжком
+float jumpApexBlend = 0.0f;     // Апекс прыжка
+float landingBlend = 0.0f;      // Приземление
+
 // Анимации
 float animationTime = 0.0f;
 bool isMoving = false;
@@ -58,6 +65,21 @@ float movementBlend = 0.0f;
 float runBlend = 0.0f;
 float crawlBlend = 0.0f;
 float leanBlend = 0.0f;
+
+// Коллизия
+struct BoundingBox {
+    glm::vec3 min;
+    glm::vec3 max;
+
+    BoundingBox() : min(0.0f), max(0.0f) {}
+    BoundingBox(glm::vec3 min, glm::vec3 max) : min(min), max(max) {}
+
+    bool intersects(const BoundingBox& other) const {
+        return (min.x <= other.max.x && max.x >= other.min.x) &&
+            (min.y <= other.max.y && max.y >= other.min.y) &&
+            (min.z <= other.max.z && max.z >= other.min.z);
+    }
+};
 
 // Model data with normals
 struct Vertex {
@@ -111,6 +133,23 @@ struct Mesh {
         if (VAO != 0) glDeleteVertexArrays(1, &VAO);
         if (VBO != 0) glDeleteBuffers(1, &VBO);
         if (EBO != 0) glDeleteBuffers(1, &EBO);
+    }
+};
+
+// Модель с коллизией
+struct CollisionMesh {
+    Mesh mesh;
+    BoundingBox bounds;
+    glm::vec3 position;
+    std::string name;
+
+    CollisionMesh() : position(0.0f), name("unknown") {}
+    CollisionMesh(const Mesh& m, const BoundingBox& b, const glm::vec3& pos = glm::vec3(0.0f), const std::string& n = "unknown")
+        : mesh(m), bounds(b), position(pos), name(n) {
+    }
+
+    BoundingBox getWorldBounds() const {
+        return BoundingBox(bounds.min + position, bounds.max + position);
     }
 };
 
@@ -231,6 +270,85 @@ private:
     }
 };
 
+// Система коллизий
+class CollisionSystem {
+private:
+    std::vector<CollisionMesh> obstacles;
+    BoundingBox characterBounds;
+
+public:
+    CollisionSystem() {
+        // Базовые границы персонажа (будет обновляться)
+        characterBounds = BoundingBox(glm::vec3(-0.3f, 0.0f, -0.3f), glm::vec3(0.3f, 1.8f, 0.3f));
+    }
+
+    void addObstacle(const CollisionMesh& obstacle) {
+        obstacles.push_back(obstacle);
+    }
+
+    void setCharacterBounds(const BoundingBox& bounds) {
+        characterBounds = bounds;
+    }
+
+    BoundingBox getCharacterWorldBounds(const glm::vec3& position) const {
+        return BoundingBox(characterBounds.min + position, characterBounds.max + position);
+    }
+
+    bool checkCollision(const glm::vec3& position) const {
+        BoundingBox charBounds = getCharacterWorldBounds(position);
+
+        for (const auto& obstacle : obstacles) {
+            if (charBounds.intersects(obstacle.getWorldBounds())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    glm::vec3 resolveCollision(const glm::vec3& oldPos, const glm::vec3& newPos) const {
+        if (!checkCollision(newPos)) {
+            return newPos;
+        }
+
+        // Пробуем двигаться только по X
+        glm::vec3 testPos = glm::vec3(newPos.x, oldPos.y, oldPos.z);
+        if (!checkCollision(testPos)) {
+            return testPos;
+        }
+
+        // Пробуем двигаться только по Z
+        testPos = glm::vec3(oldPos.x, oldPos.y, newPos.z);
+        if (!checkCollision(testPos)) {
+            return testPos;
+        }
+
+        // Если всё ещё коллизия, остаёмся на месте
+        return oldPos;
+    }
+
+    void drawObstacles(Shader& shader) const {
+        for (const auto& obstacle : obstacles) {
+            glm::mat4 transform = glm::translate(glm::mat4(1.0f), obstacle.position);
+
+            // Специальные трансформации для разных типов препятствий
+            if (obstacle.name.find("arch") != std::string::npos) {
+                // Арка - добавляем немного высоты
+                transform = glm::translate(transform, glm::vec3(0.0f, 1.0f, 0.0f));
+            }
+            else if (obstacle.name.find("stairs") != std::string::npos) {
+                // Лестница
+                transform = glm::translate(transform, glm::vec3(0.0f, -0.5f, 0.0f));
+            }
+
+            shader.setMat4("model", transform);
+            shader.setVec3("objectColor", obstacle.mesh.color);
+            glBindVertexArray(obstacle.mesh.VAO);
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(obstacle.mesh.indices.size()), GL_UNSIGNED_INT, 0);
+            glBindVertexArray(0);
+        }
+    }
+};
+
 // Create fallback cube mesh
 Mesh createCubeMesh(const glm::vec3& color = glm::vec3(0.7f, 0.6f, 0.8f)) {
     Mesh mesh;
@@ -283,11 +401,10 @@ Mesh createHeadMesh() {
 Mesh createArmMesh(bool isLeft = true, const glm::vec3& color = glm::vec3(0.2f, 0.4f, 0.8f)) {
     Mesh arm = createCubeMesh(color);
     for (auto& vertex : arm.vertices) {
-        vertex.position.x *= 0.1f;
+        vertex.position.x *= 0.08f;
         vertex.position.y *= 0.6f;
         vertex.position.z *= 0.1f;
-        vertex.position.x += (isLeft ? -0.25f : 0.25f);
-        vertex.position.y += 0.3f;
+        vertex.position.y -= 0.3f;
     }
     return arm;
 }
@@ -298,7 +415,6 @@ Mesh createLegMesh(bool isLeft = true, const glm::vec3& color = glm::vec3(0.3f, 
         vertex.position.x *= 0.1f;
         vertex.position.y *= 0.6f;
         vertex.position.z *= 0.1f;
-        vertex.position.x += (isLeft ? -0.12f : 0.12f);
         vertex.position.y -= 0.3f;
     }
     return leg;
@@ -364,16 +480,60 @@ void drawMesh(Shader& shader, const Mesh& mesh, const glm::mat4& transform) {
     glBindVertexArray(0);
 }
 
+// Create a simple floor
+Mesh createFloor() {
+    Mesh floor;
+    floor.color = glm::vec3(0.3f, 0.5f, 0.3f);
+
+    float size = 15.0f; // Увеличили пол
+    floor.vertices = {
+        {glm::vec3(-size, 0.0f, -size), glm::vec3(0.0f, 1.0f, 0.0f)},
+        {glm::vec3(size, 0.0f, -size), glm::vec3(0.0f, 1.0f, 0.0f)},
+        {glm::vec3(-size, 0.0f, size), glm::vec3(0.0f, 1.0f, 0.0f)},
+        {glm::vec3(size, 0.0f, size), glm::vec3(0.0f, 1.0f, 0.0f)}
+    };
+
+    floor.indices = { 0, 1, 2, 2, 1, 3 };
+    floor.setupMesh();
+    return floor;
+}
+
+// Create obstacle meshes
+Mesh createWallMesh(const glm::vec3& size = glm::vec3(1.0f, 2.0f, 0.2f),
+    const glm::vec3& color = glm::vec3(0.5f, 0.3f, 0.1f)) {
+    Mesh wall = createCubeMesh(color);
+    for (auto& vertex : wall.vertices) {
+        vertex.position.x *= size.x;
+        vertex.position.y *= size.y;
+        vertex.position.z *= size.z;
+    }
+    return wall;
+}
+
+Mesh createBoxMesh(const glm::vec3& size = glm::vec3(1.0f, 1.0f, 1.0f),
+    const glm::vec3& color = glm::vec3(0.8f, 0.6f, 0.2f)) {
+    Mesh box = createCubeMesh(color);
+    for (auto& vertex : box.vertices) {
+        vertex.position.x *= size.x;
+        vertex.position.y *= size.y;
+        vertex.position.z *= size.z;
+    }
+    return box;
+}
+
 // Input processing
-void processInput(GLFWwindow* window) {
+void processInput(GLFWwindow* window, CollisionSystem& collisionSystem) {
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
+
+    // Сохраняем старую позицию для разрешения коллизий
+    glm::vec3 oldCharacterPos = characterPos;
 
     // Проверяем движение персонажа
     bool wasMoving = isMoving;
     isMoving = false;
 
-    // Ползание (C)
+    // Ползание (C) - теперь просто наклон вперед
     bool wasCrawling = isCrawling;
     isCrawling = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS;
 
@@ -393,22 +553,25 @@ void processInput(GLFWwindow* window) {
     float currentSpeed = isCrawling ? crawlSpeed : (isRunning ? runSpeed : movementSpeed);
     float characterSpeed = currentSpeed * deltaTime;
 
-    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
         characterPos += characterForward * characterSpeed;
         isMoving = true;
     }
-    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
         characterPos -= characterForward * characterSpeed;
         isMoving = true;
     }
-    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
         characterYaw += 90.0f * deltaTime;
         isMoving = true;
     }
-    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
         characterYaw -= 90.0f * deltaTime;
         isMoving = true;
     }
+
+    // Проверка коллизий и разрешение
+    characterPos = collisionSystem.resolveCollision(oldCharacterPos, characterPos);
 
     // Плавные переходы между состояниями
     float targetBlend = isMoving ? 1.0f : 0.0f;
@@ -417,6 +580,7 @@ void processInput(GLFWwindow* window) {
     float targetRunBlend = isRunning ? 1.0f : 0.0f;
     runBlend = glm::mix(runBlend, targetRunBlend, deltaTime * 8.0f);
 
+    // Плавный переход в режим ползания (наклон вперед)
     float targetCrawlBlend = isCrawling ? 1.0f : 0.0f;
     crawlBlend = glm::mix(crawlBlend, targetCrawlBlend, deltaTime * 6.0f);
 
@@ -427,11 +591,12 @@ void processInput(GLFWwindow* window) {
     leanBlend = glm::mix(leanBlend, targetLean, deltaTime * 6.0f);
 
     // Улучшенный прыжок (нельзя прыгать во время ползания)
-    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS && !isCrawling) {
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && !isCrawling) {
         if (!isJumping && !isLanding) {
             isJumping = true;
             jumpHoldTime = 0.0f;
             jumpVelocity = baseJumpForce;
+            jumpAnimationTime = 0.0f;
         }
         else if (isJumping && jumpVelocity > 0.0f) {
             jumpHoldTime += deltaTime;
@@ -444,24 +609,6 @@ void processInput(GLFWwindow* window) {
     }
 }
 
-// Create a simple floor
-Mesh createFloor() {
-    Mesh floor;
-    floor.color = glm::vec3(0.3f, 0.5f, 0.3f);
-
-    float size = 10.0f;
-    floor.vertices = {
-        {glm::vec3(-size, 0.0f, -size), glm::vec3(0.0f, 1.0f, 0.0f)},
-        {glm::vec3(size, 0.0f, -size), glm::vec3(0.0f, 1.0f, 0.0f)},
-        {glm::vec3(-size, 0.0f, size), glm::vec3(0.0f, 1.0f, 0.0f)},
-        {glm::vec3(size, 0.0f, size), glm::vec3(0.0f, 1.0f, 0.0f)}
-    };
-
-    floor.indices = { 0, 1, 2, 2, 1, 3 };
-    floor.setupMesh();
-    return floor;
-}
-
 int main() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW\n";
@@ -472,7 +619,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "3D Character Animation", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "3D Character Animation by Adilzhan Kurmet and Adilet Malikov", NULL, NULL);
     if (!window) {
         std::cerr << "Failed to create GLFW window\n";
         glfwTerminate();
@@ -506,13 +653,31 @@ int main() {
 
     Mesh floor = createFloor();
 
-    std::cout << "\nControls:" << std::endl;
-    std::cout << "Arrow Keys - Move character" << std::endl;
+    // Создаём систему коллизий и добавляем ПРОСТЫЕ препятствия
+    CollisionSystem collisionSystem;
+
+    // Всего 4 простых препятствия
+    Mesh wallMesh = createWallMesh(glm::vec3(8.0f, 2.0f, 0.3f), glm::vec3(0.5f, 0.3f, 0.1f));
+    BoundingBox wallBounds(glm::vec3(-4.0f, 0.0f, -0.15f), glm::vec3(4.0f, 2.0f, 0.15f));
+    collisionSystem.addObstacle(CollisionMesh(wallMesh, wallBounds, glm::vec3(0.0f, 1.0f, 5.0f)));
+
+    Mesh boxMesh = createBoxMesh(glm::vec3(1.5f, 1.0f, 1.5f), glm::vec3(0.8f, 0.6f, 0.2f));
+    BoundingBox boxBounds(glm::vec3(-0.75f, 0.0f, -0.75f), glm::vec3(0.75f, 1.0f, 0.75f));
+    collisionSystem.addObstacle(CollisionMesh(boxMesh, boxBounds, glm::vec3(3.0f, 0.5f, -3.0f)));
+
+    Mesh boxMesh2 = createBoxMesh(glm::vec3(1.0f, 0.8f, 1.0f), glm::vec3(0.4f, 0.2f, 0.8f));
+    BoundingBox boxBounds2(glm::vec3(-0.5f, 0.0f, -0.5f), glm::vec3(0.5f, 0.8f, 0.5f));
+    collisionSystem.addObstacle(CollisionMesh(boxMesh2, boxBounds2, glm::vec3(-2.0f, 0.4f, 2.0f)));
+
+    std::cout << "\n3D CHARACTER" << std::endl;
+    std::cout << "Controls:" << std::endl;
+    std::cout << "WASD - Move character" << std::endl;
     std::cout << "Z - Run" << std::endl;
-    std::cout << "C - Crawl (по-пластунски)" << std::endl;
+    std::cout << "C - Lean body to front" << std::endl;
     std::cout << "Q/E - Lean body left/right" << std::endl;
-    std::cout << "J - Jump (hold for higher jump)" << std::endl;
+    std::cout << "Space - Jump (hold for higher jump)" << std::endl;
     std::cout << "ESC - Exit" << std::endl;
+
 
     // Main loop
     while (!glfwWindowShouldClose(window)) {
@@ -521,36 +686,60 @@ int main() {
         lastFrame = currentFrame;
         animationTime += deltaTime;
 
-        processInput(window);
+        processInput(window, collisionSystem);
 
         // Улучшенная физика прыжка с приземлением
         static float landingSquatCurrent = 0.0f;
 
         if (isJumping && !isCrawling) {
+            jumpAnimationTime += deltaTime;
             characterHeight += jumpVelocity * deltaTime;
             jumpVelocity += gravity * deltaTime;
+
+            // Анимации прыжка
+            if (jumpVelocity > 0.0f) {
+                // Фаза взлёта
+                jumpSquatBlend = glm::max(0.0f, 1.0f - jumpAnimationTime * 8.0f);
+                jumpApexBlend = glm::min(jumpAnimationTime * 4.0f, 1.0f);
+            }
+            else {
+                // Фаза падения
+                jumpSquatBlend = 0.0f;
+                jumpApexBlend = glm::max(0.0f, 1.0f - (-jumpVelocity) * 0.5f);
+            }
 
             if (characterHeight <= 0.0f) {
                 characterHeight = 0.0f;
                 isJumping = false;
                 isLanding = true;
                 landingSquatCurrent = 0.15f;
+                landingBlend = 1.0f;
                 jumpVelocity = 0.0f;
                 jumpHoldTime = 0.0f;
+                jumpAnimationTime = 0.0f;
             }
         }
 
         // Обработка приземления
         if (isLanding) {
             landingSquatCurrent -= landingRecovery * deltaTime;
+            landingBlend = glm::max(0.0f, landingBlend - deltaTime * 4.0f);
+
             if (landingSquatCurrent <= 0.0f) {
                 landingSquatCurrent = 0.0f;
                 isLanding = false;
+                landingBlend = 0.0f;
             }
         }
 
-        // Микроанимации (только когда не ползаем)
-        float breathing = isCrawling ? 0.0f : std::sin(animationTime * 3.0f) * 0.02f;
+        // Сброс анимаций прыжка когда не прыгаем
+        if (!isJumping && !isLanding) {
+            jumpSquatBlend = 0.0f;
+            jumpApexBlend = 0.0f;
+        }
+
+        // Микроанимации (работают всегда, включая ползание)
+        float breathing = std::sin(animationTime * 3.0f) * 0.02f;
         float headBob = std::sin(animationTime * 8.0f) * 0.01f * movementBlend * (1.0f - crawlBlend);
         float idleArmSway = std::sin(animationTime * 2.0f) * 0.05f * (1.0f - movementBlend) * (1.0f - crawlBlend);
 
@@ -563,11 +752,11 @@ int main() {
         // Camera
         glm::mat4 view = glm::lookAt(
             cameraPos,
-            characterPos + glm::vec3(0.0f, 1.5f - crawlBlend * 0.8f, 0.0f), // Камера опускается при ползании
+            characterPos + glm::vec3(0.0f, 1.5f, 0.0f), // Камера не опускается при ползании
             cameraUp
         );
         glm::mat4 projection = glm::perspective(glm::radians(45.0f),
-            SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+            (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
 
         shader.setMat4("view", view);
         shader.setMat4("projection", projection);
@@ -578,6 +767,9 @@ int main() {
         // Draw floor
         drawMesh(shader, floor, glm::mat4(1.0f));
 
+        // Draw obstacles
+        collisionSystem.drawObstacles(shader);
+
         // Основные анимации с учетом всех состояний
         float walkCycleSpeed = isRunning ? 12.0f : 8.0f;
         float walkCycleAmplitude = isRunning ? 40.0f : 30.0f;
@@ -587,48 +779,61 @@ int main() {
         float armSwingAmplitude = isRunning ? 35.0f : 25.0f;
         float armSwing = std::sin(animationTime * armSwingSpeed) * armSwingAmplitude * movementBlend * (1.0f - crawlBlend);
 
-        // Анимация ползания по-пластунски
-        float crawlCycle = std::sin(animationTime * 4.0f) * 25.0f * movementBlend * crawlBlend;
-
         // Base character transform с наклоном всего тела
-        float currentHeight = characterHeight - landingSquatCurrent - crawlBlend * 0.8f;
+        float currentHeight = characterHeight - landingSquatCurrent;
         glm::mat4 characterBase = glm::translate(glm::mat4(1.0f),
             characterPos + glm::vec3(0.0f, currentHeight, 0.0f));
         characterBase = glm::rotate(characterBase, glm::radians(characterYaw), glm::vec3(0, 1, 0));
 
-        // Наклон всего тела в стороны - ПРИМЕНЯЕТСЯ КО ВСЕМУ ТЕЛУ
+        // Наклон всего тела в стороны
         glm::mat4 characterBaseWithLean = characterBase;
         characterBaseWithLean = glm::rotate(characterBaseWithLean, glm::radians(leanBlend), glm::vec3(0, 0, 1));
+
+        // ПРОСТОЙ НАКЛОН ВПЕРЕД ПРИ ПОЛЗАНИИ
+        float forwardLean = crawlBlend * 45.0f; // Наклон вперед на 45 градусов
 
         // Наклон туловища при движении (только при ходьбе/беге)
         float torsoLean = movementBlend * 5.0f * (1.0f - crawlBlend);
 
-        // Torso с дыханием и наклоном (при ползании лежит на земле)
-        glm::mat4 torsoTransform = characterBaseWithLean; // ИСПОЛЬЗУЕМ characterBaseWithLean
-        torsoTransform = glm::translate(torsoTransform, glm::vec3(0.0f, 0.3f + breathing - crawlBlend * 0.6f, 0.0f));
-        torsoTransform = glm::rotate(torsoTransform, glm::radians(torsoLean), glm::vec3(1, 0, 0)); // Наклон вперед при ходьбе
+        // Torso с дыханием и наклоном + анимации прыжка
+        glm::mat4 torsoTransform = characterBaseWithLean;
+
+        // Приседание перед прыжком
+        float squatOffset = jumpSquatBlend * 0.1f;
+        // Поджатие ног в апексе прыжка
+        float apexTuck = jumpApexBlend * 0.2f;
+        // Приземление
+        float landingSquat = landingBlend * 0.15f;
+
+        torsoTransform = glm::translate(torsoTransform, glm::vec3(0.0f, 0.3f + breathing - squatOffset - landingSquat, 0.0f));
+        // Наклон вперед при ползании
+        torsoTransform = glm::rotate(torsoTransform, glm::radians(torsoLean + forwardLean), glm::vec3(1, 0, 0));
         drawMesh(shader, torso, torsoTransform);
 
-        // Head с микродвижениями
+        // Head с микродвижениями + анимации прыжка - УЛУЧШЕННЫЙ НАКЛОН
         glm::mat4 headTransform = torsoTransform;
-        headTransform = glm::translate(headTransform, glm::vec3(0.0f, 0.2f + headBob - crawlBlend * 0.1f, 0.0f));
-        headTransform = glm::rotate(headTransform, glm::radians(15.0f * crawlBlend), glm::vec3(1, 0, 0)); // Голова приподнята при ползании
+        float headJumpTilt = jumpApexBlend * 10.0f; // Наклон головы в прыжке
+        // УВЕЛИЧЕННАЯ компенсация наклона головы при ползании, чтобы смотреть вперед
+        float headCompensation = -forwardLean * -0.4f; // УВЕЛИЧЕНО с 0.7f до 0.9f
+        headTransform = glm::translate(headTransform, glm::vec3(0.0f, 0.2f + headBob + apexTuck, 0.0f));
+        headTransform = glm::rotate(headTransform, glm::radians(headJumpTilt + headCompensation), glm::vec3(1, 0, 0));
         drawMesh(shader, head, headTransform);
 
-        // Arms - комбинированная анимация ходьбы, ползания и покоя
-        // ИСПОЛЬЗУЕМ characterBaseWithLean ДЛЯ ВСЕХ ЧАСТЕЙ ТЕЛА
+        // Arms с анимациями прыжка - УЛУЧШЕННЫЙ НАКЛОН
         glm::mat4 leftArmTransform = characterBaseWithLean;
 
-        if (crawlBlend > 0.0f) {
-            // Поза для ползания: руки вытянуты вперед
-            leftArmTransform = glm::translate(leftArmTransform, glm::vec3(-0.15f, 0.1f, 0.2f));
-            leftArmTransform = glm::rotate(leftArmTransform, glm::radians(-80.0f), glm::vec3(1, 0, 0)); // Руки вперед
-            leftArmTransform = glm::rotate(leftArmTransform, glm::radians(crawlCycle), glm::vec3(1, 0, 0)); // Анимация ползания
+        if (isJumping) {
+            // Анимация рук в прыжке - взмах при отталкивании
+            float armJumpSwing = jumpSquatBlend * 60.0f - jumpApexBlend * 30.0f;
+            leftArmTransform = glm::translate(leftArmTransform, glm::vec3(-0.25f, 0.7f - squatOffset, 0.0f));
+            leftArmTransform = glm::rotate(leftArmTransform, glm::radians(armJumpSwing), glm::vec3(1, 0, 0));
+            leftArmTransform = glm::rotate(leftArmTransform, glm::radians(10.0f), glm::vec3(0, 0, 1));
         }
         else {
-            // Нормальная поза - руки наклоняются вместе с телом
-            leftArmTransform = glm::translate(leftArmTransform, glm::vec3(-0.05f, 0.35f, 0.0f));
+            leftArmTransform = glm::translate(leftArmTransform, glm::vec3(-0.25f, 0.7f, 0.0f));
             float leftArmRotation = armSwing + idleArmSway;
+            // УВЕЛИЧЕННЫЙ наклон рук вперед при ползании
+            leftArmRotation += forwardLean * 1.2f; // УВЕЛИЧЕНО с 0.8f до 1.2f
             leftArmTransform = glm::rotate(leftArmTransform, glm::radians(leftArmRotation), glm::vec3(1, 0, 0));
             leftArmTransform = glm::rotate(leftArmTransform, glm::radians(10.0f), glm::vec3(0, 0, 1));
         }
@@ -636,49 +841,61 @@ int main() {
 
         glm::mat4 rightArmTransform = characterBaseWithLean;
 
-        if (crawlBlend > 0.0f) {
-            // Поза для ползания: руки вытянуты вперед
-            rightArmTransform = glm::translate(rightArmTransform, glm::vec3(0.15f, 0.1f, 0.2f));
-            rightArmTransform = glm::rotate(rightArmTransform, glm::radians(-80.0f), glm::vec3(1, 0, 0)); // Руки вперед
-            rightArmTransform = glm::rotate(rightArmTransform, glm::radians(-crawlCycle), glm::vec3(1, 0, 0)); // Анимация ползания (противофаза)
+        if (isJumping) {
+            // Анимация рук в прыжке - взмах при отталкивании
+            float armJumpSwing = jumpSquatBlend * 60.0f - jumpApexBlend * 30.0f;
+            rightArmTransform = glm::translate(rightArmTransform, glm::vec3(0.25f, 0.7f - squatOffset, 0.0f));
+            rightArmTransform = glm::rotate(rightArmTransform, glm::radians(armJumpSwing), glm::vec3(1, 0, 0));
+            rightArmTransform = glm::rotate(rightArmTransform, glm::radians(-10.0f), glm::vec3(0, 0, 1));
         }
         else {
-            // Нормальная поза - руки наклоняются вместе с телом
-            rightArmTransform = glm::translate(rightArmTransform, glm::vec3(0.05f, 0.35f, 0.0f));
+            rightArmTransform = glm::translate(rightArmTransform, glm::vec3(0.25f, 0.7f, 0.0f));
             float rightArmRotation = -armSwing - idleArmSway;
+            // УВЕЛИЧЕННЫЙ наклон рук вперед при ползании
+            rightArmRotation += forwardLean * 1.2f; // УВЕЛИЧЕНО с 0.8f до 1.2f
             rightArmTransform = glm::rotate(rightArmTransform, glm::radians(rightArmRotation), glm::vec3(1, 0, 0));
             rightArmTransform = glm::rotate(rightArmTransform, glm::radians(-10.0f), glm::vec3(0, 0, 1));
         }
         drawMesh(shader, rightArm, rightArmTransform);
 
-        // Legs с анимацией ходьбы и ползания
+        // Legs с анимациями прыжка
         glm::mat4 leftLegTransform = characterBaseWithLean;
 
-        if (crawlBlend > 0.0f) {
-            // Поза для ползания: ноги сзади
-            leftLegTransform = glm::translate(leftLegTransform, glm::vec3(-0.1f, 0.05f, -0.3f));
-            leftLegTransform = glm::rotate(leftLegTransform, glm::radians(160.0f), glm::vec3(1, 0, 0)); // Ноги сзади
-            leftLegTransform = glm::rotate(leftLegTransform, glm::radians(-crawlCycle * 0.5f), glm::vec3(1, 0, 0)); // Анимация ползания
+        if (isJumping) {
+            // Анимация ног в прыжке - приседание + поджатие
+            float legSquat = jumpSquatBlend * 45.0f;
+            float legTuck = jumpApexBlend * 60.0f;
+            leftLegTransform = glm::translate(leftLegTransform, glm::vec3(-0.12f, 0.1f - squatOffset, 0.0f));
+            leftLegTransform = glm::rotate(leftLegTransform, glm::radians(-legSquat - legTuck), glm::vec3(1, 0, 0));
+            leftLegTransform = glm::translate(leftLegTransform, glm::vec3(0.0f, -0.3f, 0.0f));
         }
         else {
-            // Нормальная поза - ноги наклоняются вместе с телом
-            leftLegTransform = glm::translate(leftLegTransform, glm::vec3(-0.15f, -0.05f - landingSquatCurrent, 0.0f));
-            leftLegTransform = glm::rotate(leftLegTransform, glm::radians(-walkCycle), glm::vec3(1, 0, 0));
+            leftLegTransform = glm::translate(leftLegTransform, glm::vec3(-0.12f, 0.1f, 0.0f));
+            float leftLegRotation = -walkCycle;
+            // Небольшой наклон ног вперед при ползании
+            leftLegRotation += forwardLean * 0.3f;
+            leftLegTransform = glm::rotate(leftLegTransform, glm::radians(leftLegRotation), glm::vec3(1, 0, 0));
+            leftLegTransform = glm::translate(leftLegTransform, glm::vec3(0.0f, -0.3f, 0.0f));
         }
         drawMesh(shader, leftLeg, leftLegTransform);
 
         glm::mat4 rightLegTransform = characterBaseWithLean;
 
-        if (crawlBlend > 0.0f) {
-            // Поза для ползания: ноги сзади
-            rightLegTransform = glm::translate(rightLegTransform, glm::vec3(0.1f, 0.05f, -0.3f));
-            rightLegTransform = glm::rotate(rightLegTransform, glm::radians(160.0f), glm::vec3(1, 0, 0)); // Ноги сзади
-            rightLegTransform = glm::rotate(rightLegTransform, glm::radians(crawlCycle * 0.5f), glm::vec3(1, 0, 0)); // Анимация ползания (противофаза)
+        if (isJumping) {
+            // Анимация ног в прыжке - приседание + поджатие
+            float legSquat = jumpSquatBlend * 45.0f;
+            float legTuck = jumpApexBlend * 60.0f;
+            rightLegTransform = glm::translate(rightLegTransform, glm::vec3(0.12f, 0.1f - squatOffset, 0.0f));
+            rightLegTransform = glm::rotate(rightLegTransform, glm::radians(-legSquat - legTuck), glm::vec3(1, 0, 0));
+            rightLegTransform = glm::translate(rightLegTransform, glm::vec3(0.0f, -0.3f, 0.0f));
         }
         else {
-            // Нормальная поза - ноги наклоняются вместе с телом
-            rightLegTransform = glm::translate(rightLegTransform, glm::vec3(0.15f, -0.05f - landingSquatCurrent, 0.0f));
-            rightLegTransform = glm::rotate(rightLegTransform, glm::radians(walkCycle), glm::vec3(1, 0, 0));
+            rightLegTransform = glm::translate(rightLegTransform, glm::vec3(0.12f, 0.1f, 0.0f));
+            float rightLegRotation = walkCycle;
+            // Небольшой наклон ног вперед при ползании
+            rightLegRotation += forwardLean * 0.3f;
+            rightLegTransform = glm::rotate(rightLegTransform, glm::radians(rightLegRotation), glm::vec3(1, 0, 0));
+            rightLegTransform = glm::translate(rightLegTransform, glm::vec3(0.0f, -0.3f, 0.0f));
         }
         drawMesh(shader, rightLeg, rightLegTransform);
 
