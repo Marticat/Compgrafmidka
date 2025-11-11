@@ -98,7 +98,7 @@ Landing: Cushioned using a decaying velocity function to simulate impact damping
 
 
 
-Physics Simulation and Collision System
+## Physics Simulation and Collision System
 Movement Physics Integration
 Character movement and jumping use Euler Integration:
 jumpVelocity += gravity * deltaTime;
@@ -114,14 +114,15 @@ Try X displacement.
 Try Z displacement.
 If both fail → revert to old position.
 This ensures stability without jitter or penetration artifacts.
- Optimization & Performance
+## Optimization & Performance
 Single Shader Program: Reduces costly OpenGL state changes.
 Batch Mesh Loading: Minimizes draw calls, improving performance.
 Efficient Collision Handling: Lightweight and suitable for real-time environments.
  Average Performance: ~60+ FPS (on midrange hardware)
 
-Controls
-KeyActionWMove ForwardSMove BackwardARotate LeftDRotate RightSPACEJump
+## Controls
+KeyAction
+WMove ForwardSMove BackwardARotate LeftDRotate RightSPACEJump
 
  Project Structure
 midterm/
@@ -133,7 +134,7 @@ midterm/
 └── README.md
 
 
- Build and Run Instructions
+## Build and Run Instructions
 Using CMake (Recommended)
 git clone <repo-url>
 cd midterm
@@ -148,7 +149,7 @@ g++ src/main.cpp -o midterm -lglfw3 -lassimp -ldl -lGL -lX11 -lpthread -lXrandr 
 
 (Modify library paths based on your OS setup.)
 
-Conclusion
+## Conclusion
 The project demonstrates the core foundations of a 3D game engine:
 Real-time rendering with modern OpenGL.
 Hierarchical transformations and procedural animation.
