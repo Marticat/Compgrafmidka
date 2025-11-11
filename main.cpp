@@ -833,7 +833,7 @@ int main() {
             leftArmTransform = glm::translate(leftArmTransform, glm::vec3(-0.25f, 0.7f, 0.0f));
             float leftArmRotation = armSwing + idleArmSway;
             // УВЕЛИЧЕННЫЙ наклон рук вперед при ползании
-            leftArmRotation += forwardLean * 1.2f; // УВЕЛИЧЕНО с 0.8f до 1.2f
+            leftArmRotation += forwardLean * 1.6f; // УВЕЛИЧЕНО с 0.8f до 1.2f
             leftArmTransform = glm::rotate(leftArmTransform, glm::radians(leftArmRotation), glm::vec3(1, 0, 0));
             leftArmTransform = glm::rotate(leftArmTransform, glm::radians(10.0f), glm::vec3(0, 0, 1));
         }
@@ -852,7 +852,7 @@ int main() {
             rightArmTransform = glm::translate(rightArmTransform, glm::vec3(0.25f, 0.7f, 0.0f));
             float rightArmRotation = -armSwing - idleArmSway;
             // УВЕЛИЧЕННЫЙ наклон рук вперед при ползании
-            rightArmRotation += forwardLean * 1.2f; // УВЕЛИЧЕНО с 0.8f до 1.2f
+            rightArmRotation += forwardLean * 1.6f; // УВЕЛИЧЕНО с 0.8f до 1.2f
             rightArmTransform = glm::rotate(rightArmTransform, glm::radians(rightArmRotation), glm::vec3(1, 0, 0));
             rightArmTransform = glm::rotate(rightArmTransform, glm::radians(-10.0f), glm::vec3(0, 0, 1));
         }
@@ -862,8 +862,7 @@ int main() {
         glm::mat4 leftLegTransform = characterBaseWithLean;
 
         if (isJumping) {
-            // Анимация ног в прыжке - приседание + поджатие
-            float legSquat = jumpSquatBlend * 45.0f;
+            float legSquat = jumpSquatBlend * 85.0f;
             float legTuck = jumpApexBlend * 60.0f;
             leftLegTransform = glm::translate(leftLegTransform, glm::vec3(-0.12f, 0.1f - squatOffset, 0.0f));
             leftLegTransform = glm::rotate(leftLegTransform, glm::radians(-legSquat - legTuck), glm::vec3(1, 0, 0));
@@ -872,7 +871,6 @@ int main() {
         else {
             leftLegTransform = glm::translate(leftLegTransform, glm::vec3(-0.12f, 0.1f, 0.0f));
             float leftLegRotation = -walkCycle;
-            // Небольшой наклон ног вперед при ползании
             leftLegRotation += forwardLean * 0.3f;
             leftLegTransform = glm::rotate(leftLegTransform, glm::radians(leftLegRotation), glm::vec3(1, 0, 0));
             leftLegTransform = glm::translate(leftLegTransform, glm::vec3(0.0f, -0.3f, 0.0f));
@@ -882,7 +880,6 @@ int main() {
         glm::mat4 rightLegTransform = characterBaseWithLean;
 
         if (isJumping) {
-            // Анимация ног в прыжке - приседание + поджатие
             float legSquat = jumpSquatBlend * 45.0f;
             float legTuck = jumpApexBlend * 60.0f;
             rightLegTransform = glm::translate(rightLegTransform, glm::vec3(0.12f, 0.1f - squatOffset, 0.0f));
@@ -892,14 +889,12 @@ int main() {
         else {
             rightLegTransform = glm::translate(rightLegTransform, glm::vec3(0.12f, 0.1f, 0.0f));
             float rightLegRotation = walkCycle;
-            // Небольшой наклон ног вперед при ползании
             rightLegRotation += forwardLean * 0.3f;
             rightLegTransform = glm::rotate(rightLegTransform, glm::radians(rightLegRotation), glm::vec3(1, 0, 0));
             rightLegTransform = glm::translate(rightLegTransform, glm::vec3(0.0f, -0.3f, 0.0f));
         }
         drawMesh(shader, rightLeg, rightLegTransform);
 
-        // Swap buffers and poll events
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
