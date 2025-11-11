@@ -58,7 +58,7 @@ Implemented through the `Mesh` structure:
 - **VAO** — maintains attribute bindings (position = slot 0, normal = slot 1).  
 
 ### Model Loading
-External 3D models (like `biped.obj`) are imported using **Assimp**, ensuring compatibility with standard asset workflows used in game development.
+External 3D models (like `.obj`) are imported using **Assimp**, ensuring compatibility with standard asset workflows used in game development.
 
 ---
 
@@ -133,7 +133,7 @@ midterm/
 └── README.md
 
 
-🛠️ Build and Run Instructions
+ Build and Run Instructions
 Using CMake (Recommended)
 git clone <repo-url>
 cd midterm
